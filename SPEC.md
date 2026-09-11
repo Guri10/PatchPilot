@@ -12,8 +12,15 @@ rate** plus the **issue-guided vs test-guided ablation** writeup, demoed as a re
 ## Benchmark & scoring
 - **SWE-bench Lite** (300 real bug-fix tasks, 11 Python repos). Resolved rate = headline metric,
   reported from the **issue-guided** arm.
-- **Scoring via free cloud sb-cli** (SWE-bench's hosted, Modal-backed official harness). Never scored
-  locally. Do NOT use Modal's paid `--modal` scoring flag — that double-pays for scoring.
+- **Scoring in-sandbox with the official `swebench` harness — see ADR-0005.** After the loop we apply
+  the instance's `test_patch` + judgment tests on top of the agent's patch and run them **inside the
+  same Modal instance image the agent worked in**, parsing the result with the `swebench` library's own
+  log-parser. Grading runs in the official image → zero env drift (the concern behind the old
+  "never scored locally" rule; that concern doesn't apply when the grader runs in that image).
+- **Cloud sb-cli is not the grader right now.** Its key-generation endpoint has been down since
+  2026-08-24 (`swe-bench/sb-cli#38`, unfixed as of 2026-09-11), so no key can be obtained. The
+  `predictions.jsonl` we produce is exactly what sb-cli consumes, so cloud submission stays a one-line
+  swap-in for when the outage clears. Do NOT use Modal's paid `--modal` scoring flag — that double-pays.
 
 ## Two eval arms — see ADR-0001
 - **Issue-guided** (headline): agent sees only the issue text + repo; must infer, localize, fix. The
@@ -29,7 +36,7 @@ rate** plus the **issue-guided vs test-guided ablation** writeup, demoed as a re
 | Action space | **Bash-only to bootstrap** (one exec tool) to reach a working loop fastest, then **graduate to the structured toolset**: `read_file` (line ranges), `grep` (`file:line`), `edit_file` (search/replace), `run_tests` (truncated output). | 0004 |
 | Agent environment | Tools execute inside the **official SWE-bench instance image**, hosted on a **Modal Sandbox** (managed — not hand-rolled — so it fits "no bespoke sandboxing"). Same image sb-cli grades on → zero env drift. Mac only orchestrates. | 0002 |
 | Models | **Haiku** for building/debugging the scaffold; **Sonnet** for iteration + the headline scoring runs. Opus not used. Behind one swappable interface. | — |
-| Patch → score | After the loop, take the sandbox's `git diff`, **strip the agent's own reproduction test** (submit source changes only), assemble `predictions.jsonl`, submit to sb-cli. | 0004 |
+| Patch → score | After the loop, take the sandbox's `git diff`, **strip the agent's own reproduction test** (submit source changes only), assemble `predictions.jsonl`, then **grade in-sandbox** — apply the instance `test_patch` + judgment tests in the same image and parse with the `swebench` harness. `predictions.jsonl` stays the artifact cloud sb-cli would consume. | 0004, 0005 |
 | Observability | Full per-instance **trajectory log** (every thought / command / output) on by default. | 0003 |
 | Orchestration | One Modal sandbox per instance → loop → extract diff → tear down. **Bounded parallelism** (start sequential on the dev subset). **Resumable** by `instance_id`. **Cost-tracked** with a global hard-cap kill-switch. | 0004 |
 | Demo | Open a fix PR (or post a patch) on a real GitHub repo via the **GitHub MCP**. | — |
@@ -59,7 +66,9 @@ Validate the full pipeline on **1–2 instances** → iterate on a **~20–30 ca
 
 ## External pieces to set up
 - SWE-bench Lite dataset (HuggingFace, free).
-- sb-cli account/key (free scoring).
+- `swebench` library (in-sandbox grading; ADR-0005). No account needed.
+- sb-cli account/key — **not required** while grading in-sandbox; currently unobtainable anyway
+  (`swe-bench/sb-cli#38`). Only needed if/when we swap back to cloud submission.
 - Modal account (agent sandboxes; $30 free credit).
 - Anthropic API key (Haiku + Sonnet).
 - GitHub MCP (already available in this environment) for the PR demo.
