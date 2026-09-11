@@ -38,13 +38,29 @@ pip install -e ".[dev]"
 
 Prerequisites (see SPEC.md → "External pieces to set up"):
 
-- `ANTHROPIC_API_KEY` in the environment.
+- `ANTHROPIC_API_KEY` — see "Configuration" below.
 - A Modal account, authenticated (`modal token new`).
 - sb-cli installed and authenticated (its API key set) for `--submit`.
 
 ```bash
 python -m patchpilot --instance-id django__django-11099 --submit
 ```
+
+### Configuration
+
+Config comes from (in precedence order) CLI flags → environment variables →
+a per-project `.env` file → defaults. Recognised variables: `ANTHROPIC_API_KEY`
+(required), `PATCHPILOT_MODEL`, `PATCHPILOT_STEP_CAP`, `PATCHPILOT_RUNS_DIR`.
+
+For a project-local key, copy the template and fill it in:
+
+```bash
+cp .env.example .env      # .env is gitignored — never commit real keys
+```
+
+The CLI loads `.env` from the working directory automatically (override the path
+with `--env-file`). A real exported environment variable always wins over `.env`,
+so a global `export ANTHROPIC_API_KEY=...` still works and takes precedence.
 
 Outputs land in `runs/<instance_id>/`:
 
