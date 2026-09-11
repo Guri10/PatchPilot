@@ -114,25 +114,30 @@ def run_instance(config: RunConfig, *, submit_score: bool = False) -> RunSummary
 
 
 def _score(config: RunConfig, predictions_path: Path) -> bool | None:
-    """Submit to sb-cli and, if a report lands next to it, read the verdict."""
+    """Submit to sb-cli and read the verdict from the report it writes.
+
+    ``sb-cli submit`` waits for evaluation and writes a JSON report into the
+    output dir; we point that at the run dir and read the report back.
+    """
     run_id = f"patchpilot-{config.instance_id}"
+    report_dir = predictions_path.parent
     proc = submit(
         predictions_path=predictions_path,
         run_id=run_id,
         dataset=config.dataset,
         split=config.split,
+        output_dir=report_dir,
     )
     print(proc.stdout)
     if proc.stderr:
         print(proc.stderr)
-    # sb-cli writes a results JSON; look for it alongside the predictions.
-    # (Some sb-cli versions require a separate `sb-cli get-report` call instead;
-    # if no report is found, the score is fetched manually — see README.)
-    report_path = predictions_path.parent / f"{run_id}.json"
-    if report_path.exists():
-        return parse_resolved(load_report(report_path), config.instance_id)
+    # sb-cli names the report itself; predictions is .jsonl, so *.json is the
+    # report. Take the newest in case of reruns.
+    reports = sorted(report_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    if reports:
+        return parse_resolved(load_report(reports[-1]), config.instance_id)
     print(
-        f"no report at {report_path}; fetch it with "
+        f"no report json in {report_dir}; fetch it with "
         f"`sb-cli get-report {config.dataset} {config.split} --run_id {run_id}`"
     )
     return None

@@ -40,7 +40,8 @@ Prerequisites (see SPEC.md → "External pieces to set up"):
 
 - `ANTHROPIC_API_KEY` — see "Configuration" below.
 - A Modal account, authenticated (`modal token new`).
-- sb-cli installed and authenticated (its API key set) for `--submit`.
+- For `--submit`: an sb-cli key. Generate with `sb-cli gen-api-key <email>`,
+  then set `SWEBENCH_API_KEY` (in your `.env` works — it reaches sb-cli).
 
 ```bash
 python -m patchpilot --instance-id django__django-11099 --submit
@@ -84,7 +85,10 @@ mypy
 - **Image name** (`dataset.instance_image_name`): `swebench/sweb.eval.x86_64.<id>`
   with `__` → `_1776_`, lowercased. Override with `--image` if a registry tag
   differs.
-- **sb-cli report shape** (`submit.parse_resolved`): a `resolved`/`unresolved`
-  id split (or a per-id mapping). Adjust that one function if sb-cli changes it.
+- **sb-cli report shape** (`submit.parse_resolved`): assumed a `resolved`/
+  `unresolved` id split (or a per-id mapping). The submit command and auth are
+  verified against sb-cli 0.1.x (`submit` waits and writes a report into
+  `--output_dir`, which we point at the run dir); the report's exact JSON keys
+  are confirmed on the first live run — adjust that one function if they differ.
 - The **test-guided arm is intentionally gated off** in this spine (raises in
   `agent.run_loop`); it is a later, flag-gated addition.

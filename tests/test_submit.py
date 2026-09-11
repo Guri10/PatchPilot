@@ -16,6 +16,19 @@ def test_build_submit_command():
     assert "--predictions_path" in cmd
     assert "runs/x/predictions.jsonl" in cmd
     assert "patchpilot-x" in cmd
+    assert "--output_dir" not in cmd  # omitted when not requested
+
+
+def test_build_submit_command_with_output_dir():
+    cmd = build_submit_command(
+        predictions_path="runs/x/predictions.jsonl",
+        run_id="patchpilot-x",
+        dataset="swe-bench_lite",
+        split="test",
+        output_dir="runs/x",
+    )
+    assert "--output_dir" in cmd
+    assert "runs/x" in cmd
 
 
 def test_parse_resolved_id_list_form():
