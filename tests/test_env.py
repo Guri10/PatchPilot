@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from patchpilot.env import load_dotenv, parse_env
+from patchpilot.env import find_dotenv, load_dotenv, parse_env
 
 
 def test_parse_basic_pairs():
@@ -59,3 +59,26 @@ def test_load_dotenv_override_true(tmp_path):
     target = {"ANTHROPIC_API_KEY": "from-shell"}
     load_dotenv(f, environ=target, override=True)
     assert target["ANTHROPIC_API_KEY"] == "from-file"
+
+
+def test_find_dotenv_walks_up_to_repo_root(tmp_path):
+    # Simulate a repo root holding .env with a worktree nested below it.
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=root")
+    worktree = tmp_path / ".claude" / "worktrees" / "feature"
+    worktree.mkdir(parents=True)
+    found = find_dotenv(start=worktree, stop=tmp_path)
+    assert found == (tmp_path / ".env").resolve()
+
+
+def test_find_dotenv_prefers_nearest(tmp_path):
+    (tmp_path / ".env").write_text("X=root")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / ".env").write_text("X=sub")
+    assert find_dotenv(start=sub, stop=tmp_path) == (sub / ".env").resolve()
+
+
+def test_find_dotenv_returns_none_when_absent(tmp_path):
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+    assert find_dotenv(start=sub, stop=tmp_path) is None

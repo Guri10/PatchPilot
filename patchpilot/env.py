@@ -17,6 +17,30 @@ from pathlib import Path
 DEFAULT_ENV_FILE = ".env"
 
 
+def find_dotenv(
+    filename: str = DEFAULT_ENV_FILE,
+    *,
+    start: str | os.PathLike[str] | None = None,
+    stop: str | os.PathLike[str] | None = None,
+) -> Path | None:
+    """Search from ``start`` upward for ``filename``; return it or ``None``.
+
+    Walks ``start`` (default: the current directory) and each parent up to and
+    including ``stop`` (default: the user's home directory), returning the first
+    match. This lets one ``.env`` at the repo root serve every git worktree
+    under it — worktrees live below the repo, so the upward walk reaches it.
+    """
+    here = Path(start or Path.cwd()).resolve()
+    boundary = Path(stop or Path.home()).resolve()
+    for directory in (here, *here.parents):
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+        if directory == boundary:
+            break
+    return None
+
+
 def parse_env(text: str) -> dict[str, str]:
     """Parse ``.env`` text into a dict.
 

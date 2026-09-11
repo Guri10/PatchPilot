@@ -58,8 +58,10 @@ For a project-local key, copy the template and fill it in:
 cp .env.example .env      # .env is gitignored — never commit real keys
 ```
 
-The CLI loads `.env` from the working directory automatically (override the path
-with `--env-file`). A real exported environment variable always wins over `.env`,
+The CLI finds `.env` by searching **up** from the current directory (override
+with `--env-file`). Put one `.env` at the repo root and every git worktree under
+it (`.claude/worktrees/<name>/`) picks it up automatically — no need to copy it
+into each worktree. A real exported environment variable always wins over `.env`,
 so a global `export ANTHROPIC_API_KEY=...` still works and takes precedence.
 
 Outputs land in `runs/<instance_id>/`:

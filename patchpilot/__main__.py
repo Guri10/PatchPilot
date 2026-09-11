@@ -8,8 +8,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from pathlib import Path
+
 from .config import DEFAULT_STEP_CAP, ConfigError, RunConfig
-from .env import load_dotenv
+from .env import DEFAULT_ENV_FILE, find_dotenv, load_dotenv
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -39,17 +41,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--env-file",
-        default=".env",
-        help="path to a .env file to load (default: .env; skipped if absent). "
-        "Real environment variables always take precedence.",
+        default=DEFAULT_ENV_FILE,
+        help="path to a .env file to load (default: nearest .env found by "
+        "searching up from the current directory; skipped if none). Real "
+        "environment variables always take precedence.",
     )
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    # Fill config from a project .env, without overriding the real environment.
-    load_dotenv(args.env_file)
+    # Fill config from a .env, without overriding the real environment. With the
+    # default, search upward so one repo-root .env serves every worktree under
+    # it; an explicit --env-file is used exactly as given.
+    if args.env_file == DEFAULT_ENV_FILE:
+        env_path = find_dotenv() or Path(DEFAULT_ENV_FILE)
+    else:
+        env_path = Path(args.env_file)
+    load_dotenv(env_path)
     try:
         config = RunConfig.from_env(
             args.instance_id,
