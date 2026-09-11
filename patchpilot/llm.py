@@ -60,10 +60,13 @@ class AnthropicClient:
         tools: list[dict[str, Any]],
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> LLMResponse:
+        # The SDK's param types are stricter than the plain dicts we build, but
+        # it accepts dicts at runtime (the documented raw-messages pattern);
+        # keeping this layer dict-based is deliberate (ADR-0003).
         return self._client.messages.create(
             model=self._model,
             max_tokens=max_tokens,
             system=system,
-            tools=tools,
-            messages=messages,
+            tools=tools,  # type: ignore[arg-type]
+            messages=messages,  # type: ignore[arg-type]
         )
