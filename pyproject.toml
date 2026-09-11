@@ -1,0 +1,35 @@
+[project]
+name = "patchpilot"
+version = "0.1.0"
+description = "A Python bug-fixing agent scored on SWE-bench Lite via the official cloud harness."
+requires-python = ">=3.11"
+# Runtime deps are imported lazily so the package imports (and its tests run)
+# without a live environment. Install these to actually run against an instance.
+dependencies = [
+    "anthropic>=0.40",
+    "modal>=0.64",
+    "datasets>=2.19",
+    "sb-cli>=0.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mypy>=1.10"]
+
+[project.scripts]
+patchpilot = "patchpilot.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["patchpilot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+files = ["patchpilot"]

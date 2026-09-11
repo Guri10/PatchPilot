@@ -1,0 +1,72 @@
+# PatchPilot
+
+A Python bug-fixing agent scored on SWE-bench Lite via the official cloud
+harness. See `SPEC.md` for the full design and `docs/adr/` for the decisions.
+
+This is the **end-to-end spine** for the issue-guided arm (issue #1): point it at
+one SWE-bench Lite `instance_id` and get a scored result — load the instance,
+run a hand-rolled ReAct loop with a single `bash` tool inside the official
+SWE-bench image on a Modal sandbox, extract the diff (stripping the agent's own
+reproduction test), and submit to sb-cli.
+
+## Layout
+
+```
+patchpilot/
+  config.py       RunConfig: env + defaults (step cap, model, arm)
+  dataset.py      load one SWE-bench Lite instance; derive its image name
+  sandbox.py      Modal sandbox lifecycle (create / exec / git_diff / teardown)
+  llm.py          thin Anthropic messages.create wrapper (behind an interface)
+  tools.py        the single bash tool (schema, dispatch, output truncation)
+  agent.py        the ReAct loop
+  patch.py        strip the reproduction test; assemble predictions.jsonl
+  submit.py       sb-cli submission + report parsing
+  trajectory.py   per-instance JSONL trajectory log
+  run.py          orchestrate one instance end to end
+  __main__.py     CLI
+tests/            unit + integration tests (run offline with fakes)
+```
+
+## Install
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+## Run
+
+Prerequisites (see SPEC.md → "External pieces to set up"):
+
+- `ANTHROPIC_API_KEY` in the environment.
+- A Modal account, authenticated (`modal token new`).
+- sb-cli installed and authenticated (its API key set) for `--submit`.
+
+```bash
+python -m patchpilot --instance-id django__django-11099 --submit
+```
+
+Outputs land in `runs/<instance_id>/`:
+
+- `trajectory.jsonl` — every thought / command / output (one JSON event per line).
+- `predictions.jsonl` — the submitted patch (source changes only).
+
+Useful flags: `--model`, `--step-cap` (default 40), `--runs-dir`, `--image`
+(override the derived SWE-bench image).
+
+## Test & typecheck
+
+```bash
+pytest        # runs offline; no API keys or network needed
+mypy
+```
+
+## Notes / assumptions to verify against live services
+
+- **Image name** (`dataset.instance_image_name`): `swebench/sweb.eval.x86_64.<id>`
+  with `__` → `_1776_`, lowercased. Override with `--image` if a registry tag
+  differs.
+- **sb-cli report shape** (`submit.parse_resolved`): a `resolved`/`unresolved`
+  id split (or a per-id mapping). Adjust that one function if sb-cli changes it.
+- The **test-guided arm is intentionally gated off** in this spine (raises in
+  `agent.run_loop`); it is a later, flag-gated addition.
