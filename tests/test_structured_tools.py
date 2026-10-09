@@ -8,7 +8,26 @@ rendering with absolute line numbers.
 
 import pytest
 
-from patchpilot.tools import apply_edit, render_file
+from patchpilot.tools import apply_edit, dispatch, render_file
+
+
+class _RaisingSandbox:
+    """Stand-in whose exec blows up, to prove dispatch never lets it escape."""
+
+    def exec(self, *args, **kwargs):
+        raise RuntimeError("sandbox exploded")
+
+
+class TestDispatchIsCrashProof:
+    def test_handler_exception_becomes_tool_error(self):
+        is_error, text = dispatch(_RaisingSandbox(), "grep", {"pattern": "x"})
+        assert is_error is True
+        assert "failed" in text and "RuntimeError" in text
+
+    def test_unknown_tool_is_reported(self):
+        is_error, text = dispatch(_RaisingSandbox(), "nope", {})
+        assert is_error is True
+        assert "unknown tool" in text
 
 FOUR_LINES = "alpha\nbravo\ncharlie\ndelta\n"
 

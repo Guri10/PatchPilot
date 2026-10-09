@@ -257,4 +257,11 @@ def dispatch(sandbox: InstanceSandbox, name: str, inp: dict) -> tuple[bool, str]
     handler = _HANDLERS.get(name)
     if handler is None:
         return True, f"unknown tool: {name!r}"
-    return handler(sandbox, inp)
+    try:
+        return handler(sandbox, inp)
+    except Exception as exc:
+        # A handler bug or a malformed tool input (wrong field type, missing key)
+        # must surface to the model as a recoverable tool error, never crash the
+        # loop — one bad call would otherwise take down the whole run (and, under
+        # batch orchestration, the batch).
+        return True, f"tool {name!r} failed: {type(exc).__name__}: {exc}"
