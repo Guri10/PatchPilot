@@ -1,17 +1,18 @@
 """Hand-rolled ReAct loop over Anthropic's raw messages.create (ADR-0003).
 
-Flat loop: send -> read tool_use -> dispatch bash -> append tool_result -> repeat.
-No agent framework. The agent sees only the issue text (issue-guided arm); the
-judgment tests are never placed in its context.
+Flat loop: send -> read tool_use -> dispatch a structured tool -> append
+tool_result -> repeat. No agent framework. The agent sees only the issue text
+(issue-guided arm); the judgment tests are never placed in its context.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import anthropic
 
-from patchpilot.tools import BASH_TOOL, run_bash
+from patchpilot.tools import STRUCTURED_TOOLS, dispatch
 from patchpilot.sandbox import InstanceSandbox
 from patchpilot.trajectory import TrajectoryLog
 
@@ -20,26 +21,31 @@ MAX_TOKENS = 4096
 SYSTEM_PROMPT = """You are PatchPilot, an autonomous software-engineering agent.
 
 You are given a bug report for a Python project. The project's full source is \
-checked out at /testbed and its dependencies are already installed. You have a \
-single tool, `bash`, that runs commands inside that checkout.
+checked out at /testbed and its dependencies are already installed. You work \
+through a small set of tools:
+
+- `grep` — find where something is defined or used (returns file:line).
+- `read_file` — read a file or a line range, with line numbers.
+- `edit_file` — replace an exact, unique snippet in a file with a new one.
+- `run_tests` — run pytest on specific node-ids/paths and see the (truncated) result.
 
 Your job: locate the bug described in the report, edit the source to fix it, and \
 verify the fix. Work like a careful engineer:
 
-1. Explore first — use grep/find/cat to understand the relevant code before editing.
-2. Reproduce the bug — where practical, write a small script or test that fails \
-because of the bug, so you can confirm your fix later. If you truly cannot build a \
-reproduction, fix directly and say so.
-3. Fix the source — make the smallest change that addresses the root cause.
-4. Verify — re-run your reproduction and any nearby existing tests to check you did \
-not break related behavior.
+1. Explore first — use `grep` and `read_file` to understand the relevant code before editing.
+2. Reproduce where practical — run the nearby existing tests with `run_tests` to see \
+the failure first, so you can confirm your fix later. If you truly cannot reproduce \
+it, fix directly and say so.
+3. Fix the source — make the smallest `edit_file` change that addresses the root \
+cause. `old_string` must match the file exactly and be unique; include surrounding \
+lines if you need to disambiguate.
+4. Verify — re-run the relevant tests with `run_tests` to confirm the fix and that \
+you did not break nearby behavior.
 
 Rules:
 - Change only source code needed for the fix. Do not edit the project's own test \
 suite to make it pass.
-- Edit files in place (e.g. with `python - <<EOF`, `sed`, or writing files); changes \
-on disk are what get graded.
-- When you are confident the bug is fixed, stop and reply WITHOUT calling the tool, \
+- When you are confident the bug is fixed, stop and reply WITHOUT calling a tool, \
 summarizing what you changed and how you verified it."""
 
 
@@ -78,7 +84,7 @@ def run_loop(
                 model=config.model,
                 max_tokens=MAX_TOKENS,
                 system=system,
-                tools=[BASH_TOOL],
+                tools=STRUCTURED_TOOLS,
                 messages=messages,
             )
         except anthropic.APIError as exc:
@@ -108,16 +114,17 @@ def run_loop(
 
         tool_results = []
         for tu in tool_uses:
-            command = tu.input.get("command", "")
+            inp = tu.input if isinstance(tu.input, dict) else {}
             steps += 1
-            trajectory.command(steps, command)
-            code, output = run_bash(sandbox, command)
-            trajectory.output(steps, code, output)
+            trajectory.command(steps, f"{tu.name} {json.dumps(inp, ensure_ascii=False)}")
+            is_error, text = dispatch(sandbox, tu.name, inp)
+            trajectory.output(steps, 1 if is_error else 0, text)
             tool_results.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": tu.id,
-                    "content": f"(exit {code})\n{output}" if output else f"(exit {code}, no output)",
+                    "content": text or "(no output)",
+                    "is_error": is_error,
                 }
             )
             if steps >= config.max_steps:

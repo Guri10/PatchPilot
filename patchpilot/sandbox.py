@@ -8,6 +8,7 @@ the repo, its dependencies, and the conda env all live in the image.
 from __future__ import annotations
 
 import base64
+import shlex
 from types import TracebackType
 
 import modal
@@ -71,7 +72,7 @@ class InstanceSandbox:
         """
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
         code, out = self.exec(
-            f"echo {encoded} | base64 -d > {path}", workdir="/"
+            f"echo {encoded} | base64 -d > {shlex.quote(path)}", workdir="/"
         )
         if code != 0:
             raise RuntimeError(f"write_file {path} failed ({code}): {out}")
