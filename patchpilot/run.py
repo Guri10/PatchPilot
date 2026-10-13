@@ -18,6 +18,7 @@ import json
 import sys
 
 from patchpilot.agent import run_loop
+from patchpilot.budget import BudgetExceeded, BudgetTracker
 from patchpilot.config import RunConfig
 from patchpilot.dataset import load_instance, test_spec_for
 from patchpilot.grade import grade
@@ -56,13 +57,26 @@ def run(config: RunConfig, gold: bool = False) -> bool:
         print("[patchpilot] --gold: grading the gold patch (grader self-check)")
         model_patch = instance["patch"]
     else:
+        budget = BudgetTracker(
+            instance_cap_usd=config.instance_budget_usd,
+            global_cap_usd=config.global_budget_usd,
+        )
+        budget.start_instance()
+        print(
+            f"[patchpilot] budget: instance cap ${config.instance_budget_usd:.2f}, "
+            f"global cap ${config.global_budget_usd:.2f}"
+        )
         with InstanceSandbox(spec.image) as sandbox:
             print("[patchpilot] sandbox up; running agent loop...")
             result = run_loop(
-                config, sandbox, instance["problem_statement"], trajectory
+                config, sandbox, instance["problem_statement"], trajectory, budget
             )
             print(f"[patchpilot] loop stopped: {result.stop_reason} after {result.steps} steps")
             raw_diff = extract_diff(sandbox)
+            # Bill Modal compute for this sandbox's lifetime before teardown.
+            budget.add_compute(sandbox.elapsed_seconds, config.modal_rate_usd_per_sec)
+        budget.raise_if_global_exceeded()
+        print(f"[patchpilot] spend: ${budget.total_cost:.4f} (tokens + compute)")
         model_patch = strip_test_changes(raw_diff)
 
     prediction = build_prediction(config.instance_id, config.model, model_patch)
@@ -87,7 +101,9 @@ def run(config: RunConfig, gold: bool = False) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PatchPilot one-instance spine")
     parser.add_argument("--instance-id", default=None, help="SWE-bench Lite instance id")
-    parser.add_argument("--model", default=None, help="Anthropic model id")
+    parser.add_argument(
+        "--model", default=None, help="Model: 'haiku', 'sonnet', or a raw Anthropic id"
+    )
     parser.add_argument("--max-steps", type=int, default=None, help="Loop step cap")
     parser.add_argument(
         "--gold", action="store_true", help="Grade the gold patch (grader self-check)"
@@ -97,7 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     config = RunConfig.from_env(
         instance_id=args.instance_id, model=args.model, max_steps=args.max_steps
     )
-    resolved = run(config, gold=args.gold)
+    try:
+        resolved = run(config, gold=args.gold)
+    except BudgetExceeded as exc:
+        # The global kill-switch fired: halt the whole run, non-zero exit.
+        print(f"\n[patchpilot] HALTED — {exc}", file=sys.stderr)
+        return 2
     return 0 if resolved else 1
 
 

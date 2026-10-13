@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import anthropic
 
+from patchpilot.budget import BudgetTracker, TokenUsage, set_cache_breakpoint
 from patchpilot.tools import STRUCTURED_TOOLS, dispatch
 from patchpilot.sandbox import InstanceSandbox
 from patchpilot.trajectory import TrajectoryLog
@@ -70,15 +71,20 @@ def run_loop(
     sandbox: InstanceSandbox,
     problem_statement: str,
     trajectory: TrajectoryLog,
+    budget: BudgetTracker | None = None,
 ) -> LoopResult:
     client = anthropic.Anthropic(api_key=config.anthropic_api_key)
     system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
     messages: list[dict] = [
         {"role": "user", "content": build_user_prompt(problem_statement)}
     ]
+    model_spec = config.model_spec
 
     steps = 0
     while steps < config.max_steps:
+        # Roll the prompt-cache breakpoint onto the latest turn so the repo/context
+        # the agent has read so far is served from cache, not re-charged in full.
+        set_cache_breakpoint(messages)
         try:
             response = client.messages.create(
                 model=config.model,
@@ -94,6 +100,15 @@ def run_loop(
             trajectory.stop(f"error: {type(exc).__name__}", steps)
             return LoopResult("error", steps)
         messages.append({"role": "assistant", "content": response.content})
+
+        if budget is not None:
+            turn_cost = budget.add_usage(model_spec, TokenUsage.from_response(response.usage))
+            # Fold in Modal compute spent so far so the ceiling covers tokens AND
+            # compute, not tokens alone (SPEC "Budget & guardrails").
+            turn_cost += budget.add_compute(
+                getattr(sandbox, "elapsed_seconds", 0.0), config.modal_rate_usd_per_sec
+            )
+            trajectory.cost(steps, turn_cost, budget.instance_cost, budget.total_cost)
 
         tool_uses = []
         for block in response.content:
@@ -111,6 +126,18 @@ def run_loop(
             # so stop rather than mislabel it "completed".
             trajectory.stop(f"stopped:{response.stop_reason}", steps)
             return LoopResult(f"stopped:{response.stop_reason}", steps)
+
+        # Cost guardrails, checked before spending more on tool calls. The global
+        # budget is the kill-switch: it propagates out to halt the whole run. The
+        # per-instance ceiling only ends this instance — its partial diff is still
+        # extracted and graded upstream.
+        if budget is not None:
+            if budget.global_exceeded():
+                trajectory.stop("stopped:global_budget", steps)
+                budget.raise_if_global_exceeded()
+            if budget.instance_exceeded():
+                trajectory.stop("stopped:instance_budget", steps)
+                return LoopResult("stopped:instance_budget", steps)
 
         tool_results = []
         for tu in tool_uses:
