@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import shlex
+import time
 from types import TracebackType
 
 import modal
@@ -30,6 +31,8 @@ class InstanceSandbox:
         self.image_tag = image_tag
         self.timeout = timeout
         self._sandbox: modal.Sandbox | None = None
+        self._started_at: float | None = None
+        self._elapsed: float = 0.0
 
     def start(self) -> "InstanceSandbox":
         app = modal.App.lookup(APP_NAME, create_if_missing=True)
@@ -37,7 +40,19 @@ class InstanceSandbox:
         self._sandbox = modal.Sandbox.create(
             app=app, image=image, timeout=self.timeout, workdir=TESTBED
         )
+        self._started_at = time.monotonic()
         return self
+
+    @property
+    def elapsed_seconds(self) -> float:
+        """Wall-clock seconds the sandbox has been (or was) alive.
+
+        Used to bill Modal compute toward the run budget. Counts live time while
+        running and is frozen at the final total once :meth:`terminate` is called.
+        """
+        if self._started_at is not None:
+            return self._elapsed + (time.monotonic() - self._started_at)
+        return self._elapsed
 
     def exec(
         self, command: str, workdir: str = TESTBED, timeout: int | None = None
@@ -78,6 +93,9 @@ class InstanceSandbox:
             raise RuntimeError(f"write_file {path} failed ({code}): {out}")
 
     def terminate(self) -> None:
+        if self._started_at is not None:
+            self._elapsed += time.monotonic() - self._started_at
+            self._started_at = None
         if self._sandbox is not None:
             self._sandbox.terminate()
             self._sandbox = None

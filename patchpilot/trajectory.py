@@ -35,6 +35,15 @@ class TrajectoryLog:
     def output(self, step: int, exit_code: int, output: str) -> None:
         self.log("output", step=step, exit_code=exit_code, output=output)
 
+    def cost(self, step: int, turn_usd: float, instance_usd: float, total_usd: float) -> None:
+        self.log(
+            "cost",
+            step=step,
+            turn_usd=round(turn_usd, 6),
+            instance_usd=round(instance_usd, 6),
+            total_usd=round(total_usd, 6),
+        )
+
     def stop(self, reason: str, steps: int) -> None:
         self.log("stop", reason=reason, steps=steps)
 
