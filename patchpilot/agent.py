@@ -1,8 +1,9 @@
 """Hand-rolled ReAct loop over Anthropic's raw messages.create (ADR-0003).
 
 Flat loop: send -> read tool_use -> dispatch a structured tool -> append
-tool_result -> repeat. No agent framework. The agent sees only the issue text
-(issue-guided arm); the judgment tests are never placed in its context.
+tool_result -> repeat. No agent framework. In the default issue-guided arm the
+agent sees only the issue text and the judgment tests are never placed in its
+context; the flag-gated test-guided arm (ADR-0001) appends them on purpose.
 """
 
 from __future__ import annotations
@@ -50,14 +51,26 @@ suite to make it pass.
 summarizing what you changed and how you verified it."""
 
 
-def build_user_prompt(problem_statement: str) -> str:
-    return (
+def build_user_prompt(
+    problem_statement: str, judgment_guidance: str | None = None
+) -> str:
+    prompt = (
         "Here is the bug report for the project checked out at /testbed:\n\n"
         "<issue>\n"
         f"{problem_statement}\n"
         "</issue>\n\n"
-        "Investigate and fix the bug. Begin by exploring the repository."
     )
+    # test-guided arm only (ADR-0001): the oracle tests are appended on purpose.
+    # When judgment_guidance is None the prompt is byte-for-byte the issue-guided
+    # one, so the default arm can never leak the tests.
+    if judgment_guidance:
+        prompt += (
+            "<judgment_tests>\n"
+            f"{judgment_guidance}\n"
+            "</judgment_tests>\n\n"
+        )
+    prompt += "Investigate and fix the bug. Begin by exploring the repository."
+    return prompt
 
 
 @dataclass
@@ -72,11 +85,15 @@ def run_loop(
     problem_statement: str,
     trajectory: TrajectoryLog,
     budget: BudgetTracker | None = None,
+    judgment_guidance: str | None = None,
 ) -> LoopResult:
     client = anthropic.Anthropic(api_key=config.anthropic_api_key)
     system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
+    # The oracle tests only reach the prompt in the test-guided arm; guard here
+    # too so a stray guidance string can never leak into the default arm.
+    guidance = judgment_guidance if config.test_guided else None
     messages: list[dict] = [
-        {"role": "user", "content": build_user_prompt(problem_statement)}
+        {"role": "user", "content": build_user_prompt(problem_statement, guidance)}
     ]
     model_spec = config.model_spec
 
