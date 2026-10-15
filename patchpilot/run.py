@@ -1,11 +1,16 @@
-"""End-to-end spine for one SWE-bench Lite instance (issue-guided arm).
+"""End-to-end spine for one SWE-bench Lite instance.
 
     python -m patchpilot.run --instance-id pallets__flask-4045
 
 Steps: load the instance -> boot a Modal sandbox on its official image -> run the
-bash-only ReAct loop over the issue text -> extract the git diff, strip the
-agent's reproduction test -> write predictions.jsonl -> grade in-sandbox and
-print resolved / not resolved.
+ReAct loop over the issue text -> extract the git diff, strip the agent's
+reproduction test -> write predictions.jsonl -> grade in-sandbox and print
+resolved / not resolved.
+
+Defaults to the issue-guided (headline) arm. --test-guided switches to the
+flag-gated oracle arm (ADR-0001), which reveals the judgment tests to the agent;
+such runs are loudly labelled and their predictions tagged so the number is
+never mistaken for the headline resolved rate.
 
 --gold skips the agent and grades the gold patch instead, to validate the grader
 on its own (it should always resolve).
@@ -20,7 +25,7 @@ import sys
 from patchpilot.agent import run_loop
 from patchpilot.budget import BudgetExceeded, BudgetTracker
 from patchpilot.config import RunConfig
-from patchpilot.dataset import load_instance, test_spec_for
+from patchpilot.dataset import judgment_tests_guidance, load_instance, test_spec_for
 from patchpilot.grade import grade
 from patchpilot.patch import build_prediction, strip_test_changes, write_predictions
 from patchpilot.sandbox import InstanceSandbox
@@ -52,6 +57,17 @@ def run(config: RunConfig, gold: bool = False) -> bool:
 
     print(f"[patchpilot] instance={config.instance_id} model={config.model}")
     print(f"[patchpilot] image={spec.image}")
+    # In gold mode no agent runs, so the arm is irrelevant — don't label the
+    # grader self-check as an oracle result.
+    oracle = config.test_guided and not gold
+    trajectory.log("arm", arm=config.arm if not gold else "gold")
+    if oracle:
+        # The oracle arm reveals the judgment tests to the agent. Shout about it
+        # so a resolved rate from this run is never mistaken for the headline.
+        print("*" * 50)
+        print("  ARM: TEST-GUIDED (oracle) — judgment tests revealed to agent.")
+        print("  Diagnostic upper bound. NOT the headline resolved rate.")
+        print("*" * 50)
 
     if gold:
         print("[patchpilot] --gold: grading the gold patch (grader self-check)")
@@ -66,10 +82,18 @@ def run(config: RunConfig, gold: bool = False) -> bool:
             f"[patchpilot] budget: instance cap ${config.instance_budget_usd:.2f}, "
             f"global cap ${config.global_budget_usd:.2f}"
         )
+        # Oracle guidance is built only in the test-guided arm; otherwise None so
+        # the judgment tests never reach the agent in the default arm.
+        guidance = judgment_tests_guidance(instance) if config.test_guided else None
         with InstanceSandbox(spec.image) as sandbox:
             print("[patchpilot] sandbox up; running agent loop...")
             result = run_loop(
-                config, sandbox, instance["problem_statement"], trajectory, budget
+                config,
+                sandbox,
+                instance["problem_statement"],
+                trajectory,
+                budget,
+                judgment_guidance=guidance,
             )
             print(f"[patchpilot] loop stopped: {result.stop_reason} after {result.steps} steps")
             raw_diff = extract_diff(sandbox)
@@ -79,7 +103,11 @@ def run(config: RunConfig, gold: bool = False) -> bool:
         print(f"[patchpilot] spend: ${budget.total_cost:.4f} (tokens + compute)")
         model_patch = strip_test_changes(raw_diff)
 
-    prediction = build_prediction(config.instance_id, config.model, model_patch)
+    # Tag the oracle arm's predictions in the field any leaderboard-style
+    # aggregation groups by, so a test-guided number can never be silently
+    # pooled into the headline issue-guided resolved rate.
+    model_label = f"{config.model}__test-guided" if oracle else config.model
+    prediction = build_prediction(config.instance_id, model_label, model_patch)
     pred_path = write_predictions(run_dir / "predictions.jsonl", prediction)
     print(f"[patchpilot] wrote {pred_path} (patch: {len(model_patch)} chars)")
 
@@ -108,10 +136,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--gold", action="store_true", help="Grade the gold patch (grader self-check)"
     )
+    parser.add_argument(
+        "--test-guided",
+        action="store_true",
+        help="ORACLE arm: reveal the judgment tests to the agent. Diagnostic "
+        "upper bound only — never the headline resolved rate (ADR-0001).",
+    )
     args = parser.parse_args(argv)
 
     config = RunConfig.from_env(
-        instance_id=args.instance_id, model=args.model, max_steps=args.max_steps
+        instance_id=args.instance_id,
+        model=args.model,
+        max_steps=args.max_steps,
+        test_guided=args.test_guided or None,
     )
     try:
         resolved = run(config, gold=args.gold)
